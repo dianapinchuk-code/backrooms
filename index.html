@@ -1,0 +1,1263 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Poolrooms - Retro 90s Style</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            overflow: hidden; 
+            background: #000; 
+            font-family: 'Courier New', Courier, monospace; 
+            user-select: none;
+        }
+        /* Ретро-пікселізація */
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+            width: 100vw !important;
+            height: 100vh !important;
+            display: block;
+        }
+        /* Сканлайни ЕПТ-монітора */
+        #scanlines {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.22) 50%);
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 2;
+        }
+        #vignette {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.65);
+            pointer-events: none;
+            z-index: 3;
+        }
+        #blocker {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background: rgba(5, 14, 18, 0.8);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: #d1f7ff;
+            cursor: pointer;
+            z-index: 10;
+        }
+        #instructions {
+            text-align: center;
+            border: 2px solid #3d6870;
+            padding: 30px 50px;
+            background: #0c1c20;
+            border-radius: 0px;
+            box-shadow: 6px 6px 0px #000000;
+        }
+        h1 { font-size: 1.8rem; margin-bottom: 12px; letter-spacing: 4px; color: #a4e4ed; text-shadow: 2px 2px #000; }
+        p { font-size: 0.9rem; color: #78a9b1; line-height: 1.7; }
+        #hud {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            color: #8ce4ef;
+            font-size: 0.88rem;
+            letter-spacing: 2px;
+            pointer-events: none;
+            z-index: 5;
+            background: rgba(5, 15, 18, 0.85);
+            padding: 8px 16px;
+            border: 1px solid #234c54;
+            box-shadow: 3px 3px 0px #000;
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 4px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.75);
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+</head>
+<body>
+
+    <div id="scanlines"></div>
+    <div id="vignette"></div>
+    <div id="hud">ПОВЕРХ: <span id="floorNum">0</span> &nbsp;|&nbsp; <span id="statusTxt">ХОЛ 4 ТУНЕЛІВ</span></div>
+    <div id="crosshair"></div>
+
+    <div id="blocker">
+        <div id="instructions">
+            <h1>LEVEL 37 : ANOMALIES</h1>
+            <p><strong>[ КЛІКНІТЬ ДЛЯ ЗАПУСКУ ]</strong></p>
+            <p style="margin-top: 15px;">
+                W, A, S, D — Рух (у воді розходяться кола та бризки)<br>
+                Миша — Огляд<br>
+                Пробіл — Стрибок / Спливти
+            </p>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+        // --- 1. СЦЕНА ТА РЕТРО-РЕНДЕРЕР ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a3840);
+        scene.fog = new THREE.FogExp2(0x1a3840, 0.018);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 80);
+        camera.position.set(0, 1.65, 7.5);
+
+        const PIXEL_SCALE = 2.4;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+        renderer.setSize(Math.floor(window.innerWidth / PIXEL_SCALE), Math.floor(window.innerHeight / PIXEL_SCALE), false);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.BasicShadowMap;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.05;
+        document.body.appendChild(renderer.domElement);
+
+        const bodyGlow = new THREE.PointLight(0xdcf6f8, 0.35, 6, 2);
+        camera.add(bodyGlow);
+        scene.add(camera);
+
+        // --- 2. ТЕКСТУРИ ТА СПІЛЬНІ МАТЕРІАЛИ ---
+        function createTileTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#f8fbfb';
+            ctx.fillRect(0, 0, 256, 256);
+            ctx.strokeStyle = '#273838';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(0, 0, 256, 256);
+            ctx.fillStyle = 'rgba(0,0,0,0.03)';
+            ctx.fillRect(4, 4, 248, 20);
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.RepeatWrapping;
+            tex.magFilter = THREE.NearestFilter;
+            return tex;
+        }
+
+        function createWaterfallTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128;
+            canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = 'rgba(15, 210, 190, 0.35)';
+            ctx.fillRect(0, 0, 128, 256);
+            for (let i = 0; i < 50; i++) {
+                const x = Math.random() * 128;
+                const w = Math.random() * 4 + 2;
+                ctx.fillStyle = `rgba(255, 255, 255, ${Math.random() * 0.45 + 0.15})`;
+                ctx.fillRect(x, 0, w, 256);
+            }
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.RepeatWrapping;
+            tex.magFilter = THREE.NearestFilter;
+            tex.repeat.set(8, 2);
+            return tex;
+        }
+
+        const tileTex = createTileTexture();
+        const waterfallTex = createWaterfallTexture();
+
+        function createMaterial(repeatX, repeatY, isDoubleSided = false) {
+            const tex = tileTex.clone();
+            tex.repeat.set(repeatX, repeatY);
+            tex.needsUpdate = true;
+            return new THREE.MeshStandardMaterial({
+                map: tex,
+                roughness: 0.18,
+                metalness: 0.03,
+                side: isDoubleSided ? THREE.DoubleSide : THREE.FrontSide
+            });
+        }
+
+        const wallMat = createMaterial(22, 6);
+        const stepMat = createMaterial(2, 1);
+        const pillarMat = createMaterial(12, 8);
+        const outerColMat = createMaterial(6, 12);
+        const slabMat = createMaterial(20, 20, true);
+        const holeRimMat = createMaterial(14, 1, true);
+        const solidFloorMat = createMaterial(26, 26, true);
+        const tWallMat = createMaterial(8, 6, true);
+        const tFloorMat = createMaterial(4, 8, true);
+
+        const waterfallMat = new THREE.MeshPhysicalMaterial({
+            map: waterfallTex,
+            color: 0x16dfc6,
+            transparent: true,
+            opacity: 0.6,
+            roughness: 0.1,
+            transmission: 0.75,
+            ior: 1.333,
+            side: THREE.DoubleSide,
+            depthWrite: false
+        });
+
+        const waterFloorMat = new THREE.MeshPhysicalMaterial({
+            color: 0x10d6bc,
+            transmission: 0.84,
+            opacity: 0.88,
+            transparent: true,
+            roughness: 0.07,
+            ior: 1.333,
+            reflectivity: 0.9,
+            side: THREE.DoubleSide
+        });
+
+        const darkTunnelWaterMat = new THREE.MeshPhysicalMaterial({
+            color: 0x052e33,
+            transmission: 0.65,
+            opacity: 0.95,
+            transparent: true,
+            roughness: 0.1,
+            ior: 1.333,
+            side: THREE.DoubleSide
+        });
+
+        const ceilingLampGeo = new THREE.BoxGeometry(2.4, 0.06, 0.9);
+        const ceilingLampMat = new THREE.MeshStandardMaterial({
+            color: 0xffffff,
+            emissive: 0xfff6ea,
+            emissiveIntensity: 1.25,
+            roughness: 0.2
+        });
+        const lampRimMat = new THREE.MeshStandardMaterial({ color: 0x222c2e, roughness: 0.5 });
+        const voidCapMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+
+        function createCeilingLamp() {
+            const group = new THREE.Group();
+            const panel = new THREE.Mesh(ceilingLampGeo, ceilingLampMat);
+            group.add(panel);
+            const rim = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.05, 1.0), lampRimMat);
+            rim.position.y = 0.01;
+            group.add(rim);
+            return group;
+        }
+
+        // --- 3. АРХІТЕКТУРНІ КОНСТАНТИ ТА КЕШ ГЕОМЕТРІЙ ---
+        const FLOOR_HEIGHT = 6.0;   
+        const STEPS_PER_FLOOR = 30; 
+        const STEP_HEIGHT = FLOOR_HEIGHT / STEPS_PER_FLOOR;
+        const SPIRAL_SPEED = (Math.PI * 2) / STEPS_PER_FLOOR;
+
+        const PILLAR_RADIUS = 1.9;
+        const STEP_WIDTH = 2.4;
+        const HOLE_RADIUS = PILLAR_RADIUS + STEP_WIDTH + 0.15;
+
+        const OUTER_COL_RADIUS = 0.75;
+        const defaultColPositions = [
+            [-6.0, -6.0], [6.0, -6.0], [-6.0, 6.0], [6.0, 6.0]
+        ];
+
+        const forestColPositions = [
+            [-10.0, -10.0], [-5.5, -10.0], [5.5, -10.0], [10.0, -10.0],
+            [-10.0, -5.5],                                [10.0, -5.5],
+            [-10.0, 5.5],                                 [10.0, 5.5],
+            [-10.0, 10.0],  [-5.5, 10.0],  [5.5, 10.0],  [10.0, 10.0]
+        ];
+
+        const outerColGeo = new THREE.CylinderGeometry(OUTER_COL_RADIUS, OUTER_COL_RADIUS, FLOOR_HEIGHT, 24);
+        const stepGeo = new THREE.BoxGeometry(STEP_WIDTH, STEP_HEIGHT, 0.72);
+        const pillarGeo = new THREE.CylinderGeometry(PILLAR_RADIUS, PILLAR_RADIUS, FLOOR_HEIGHT, 36);
+        const holeRimGeo = new THREE.CylinderGeometry(HOLE_RADIUS, HOLE_RADIUS, 0.25, 36, 1, true);
+        const waterfallGeo = new THREE.CylinderGeometry(HOLE_RADIUS - 0.02, HOLE_RADIUS - 0.02, FLOOR_HEIGHT, 48, 1, true);
+        const solidWaterGeo = new THREE.PlaneGeometry(32, 32, 48, 48);
+        const solidFloorGeo = new THREE.PlaneGeometry(32, 32);
+        const standardWallGeo = new THREE.PlaneGeometry(32, FLOOR_HEIGHT);
+
+        const slabShape = new THREE.Shape();
+        slabShape.moveTo(-16, -16);
+        slabShape.lineTo(16, -16);
+        slabShape.lineTo(16, 16);
+        slabShape.lineTo(-16, 16);
+        slabShape.closePath();
+        const holePath = new THREE.Path();
+        holePath.absarc(0, 0, HOLE_RADIUS, 0, Math.PI * 2, true);
+        slabShape.holes.push(holePath);
+
+        const slabGeo = new THREE.ShapeGeometry(slabShape);
+        const waterFloorGeo = new THREE.ShapeGeometry(slabShape);
+
+        const ARCH_RADIUS = 2.4;
+        const STRAIGHT_H = 1.2;
+        const ARCH_TOTAL_H = STRAIGHT_H + ARCH_RADIUS;
+        const TUNNEL_LEN = 11.0;
+
+        function createArchedWallGeometry() {
+            const shape = new THREE.Shape();
+            shape.moveTo(-16, 0);
+            shape.lineTo(16, 0);
+            shape.lineTo(16, FLOOR_HEIGHT);
+            shape.lineTo(-16, FLOOR_HEIGHT);
+            shape.closePath();
+
+            const hole = new THREE.Path();
+            hole.moveTo(ARCH_RADIUS, 0);
+            hole.lineTo(ARCH_RADIUS, STRAIGHT_H);
+            hole.absarc(0, STRAIGHT_H, ARCH_RADIUS, 0, Math.PI, false);
+            hole.lineTo(-ARCH_RADIUS, 0);
+            hole.closePath();
+
+            shape.holes.push(hole);
+            return new THREE.ShapeGeometry(shape);
+        }
+
+        const archedWallGeo = createArchedWallGeometry();
+        const vaultCeilGeo = new THREE.CylinderGeometry(ARCH_RADIUS, ARCH_RADIUS, TUNNEL_LEN, 32, 1, true, 0, Math.PI);
+        const sideH = STRAIGHT_H + 3.0;
+        const tunnelSideWallGeo = new THREE.PlaneGeometry(TUNNEL_LEN, sideH);
+        const tunnelDeepFloorGeo = new THREE.PlaneGeometry(ARCH_RADIUS * 2, TUNNEL_LEN);
+        const tunnelWaterGeo = new THREE.PlaneGeometry(ARCH_RADIUS * 2, TUNNEL_LEN);
+        const tunnelSlopeGeo = new THREE.PlaneGeometry(ARCH_RADIUS * 2, 6.6);
+        const voidCapGeo = new THREE.PlaneGeometry(ARCH_RADIUS * 2 + 0.2, ARCH_TOTAL_H + 3.2);
+
+        function buildArchedTunnelUnit() {
+            const unit = new THREE.Group();
+
+            const wallMesh = new THREE.Mesh(archedWallGeo, wallMat);
+            wallMesh.position.set(0, 0, -16);
+            wallMesh.receiveShadow = true;
+            unit.add(wallMesh);
+
+            const vault = new THREE.Mesh(vaultCeilGeo, tWallMat);
+            vault.rotation.x = Math.PI / 2;
+            vault.rotation.z = Math.PI;
+            vault.position.set(0, STRAIGHT_H, -16 - TUNNEL_LEN / 2);
+            unit.add(vault);
+
+            const leftWall = new THREE.Mesh(tunnelSideWallGeo, tWallMat);
+            leftWall.position.set(-ARCH_RADIUS, STRAIGHT_H - sideH / 2, -16 - TUNNEL_LEN / 2);
+            leftWall.rotation.y = Math.PI / 2;
+            unit.add(leftWall);
+
+            const rightWall = leftWall.clone();
+            rightWall.position.x = ARCH_RADIUS;
+            rightWall.rotation.y = -Math.PI / 2;
+            unit.add(rightWall);
+
+            const tFloor = new THREE.Mesh(tunnelDeepFloorGeo, tFloorMat);
+            tFloor.position.set(0, -2.8, -16 - TUNNEL_LEN / 2);
+            tFloor.rotation.x = -Math.PI / 2;
+            unit.add(tFloor);
+
+            const slope = new THREE.Mesh(tunnelSlopeGeo, tFloorMat);
+            slope.position.set(0, -1.4, -18.8);
+            slope.rotation.x = -Math.PI / 2 + 0.44;
+            unit.add(slope);
+
+            const tWater = new THREE.Mesh(tunnelWaterGeo, darkTunnelWaterMat);
+            tWater.position.set(0, 0.45, -16 - TUNNEL_LEN / 2);
+            tWater.rotation.x = -Math.PI / 2;
+            unit.add(tWater);
+
+            const voidCap = new THREE.Mesh(voidCapGeo, voidCapMat);
+            voidCap.position.set(0, 0.5, -16 - TUNNEL_LEN);
+            unit.add(voidCap);
+
+            return unit;
+        }
+
+        // --- 4. СИСТЕМА ВОДЯНИХ КІЛ (ХВИЛЬ), БРИЗОК ТА КРАПЕЛЬ ЗІ СТЕЛІ ---
+        const MAX_RIPPLES = 25;
+        const ripplePool = [];
+        const rippleGeo = new THREE.RingGeometry(0.08, 0.16, 24);
+
+        for (let i = 0; i < MAX_RIPPLES; i++) {
+            const rMat = new THREE.MeshBasicMaterial({
+                color: 0x98fff4,
+                transparent: true,
+                opacity: 0.7,
+                side: THREE.DoubleSide,
+                depthWrite: false
+            });
+            const mesh = new THREE.Mesh(rippleGeo, rMat);
+            mesh.rotation.x = -Math.PI / 2;
+            mesh.visible = false;
+            scene.add(mesh);
+            ripplePool.push({ mesh, active: false, age: 0, maxAge: 1.1, maxScale: 2.5 });
+        }
+
+        function triggerWaterRipple(x, y, z, maxScale = 2.4) {
+            let r = ripplePool.find(item => !item.active);
+            if (!r) r = ripplePool[0]; // Reuse oldest
+            r.active = true;
+            r.mesh.visible = true;
+            r.mesh.position.set(x, y + 0.008, z);
+            r.mesh.scale.set(0.15, 0.15, 1);
+            r.maxScale = maxScale;
+            r.age = 0;
+            r.mesh.material.opacity = 0.75;
+        }
+
+        // Бризки води (розлітаються при кроці)
+        const MAX_SPLASHES = 36;
+        const splashPool = [];
+        const splashGeo = new THREE.DodecahedronGeometry(0.035, 0);
+        const splashMat = new THREE.MeshBasicMaterial({ color: 0xccfffa, transparent: true, opacity: 0.85 });
+
+        for (let i = 0; i < MAX_SPLASHES; i++) {
+            const mesh = new THREE.Mesh(splashGeo, splashMat);
+            mesh.visible = false;
+            scene.add(mesh);
+            splashPool.push({
+                mesh,
+                active: false,
+                vx: 0, vy: 0, vz: 0,
+                baseY: 0
+            });
+        }
+
+        function triggerSplashParticles(x, y, z) {
+            for (let i = 0; i < 7; i++) {
+                let p = splashPool.find(item => !item.active);
+                if (!p) break;
+                p.active = true;
+                p.mesh.visible = true;
+                p.mesh.position.set(x + (Math.random() - 0.5) * 0.3, y + 0.05, z + (Math.random() - 0.5) * 0.3);
+                p.baseY = y;
+                const angle = Math.random() * Math.PI * 2;
+                const spd = 0.8 + Math.random() * 1.4;
+                p.vx = Math.cos(angle) * spd;
+                p.vy = 1.8 + Math.random() * 1.5; // Стрибок угору
+                p.vz = Math.sin(angle) * spd;
+            }
+        }
+
+        // Краплі, які стікають і падають зі стелі
+        const ceilingDrips = [];
+        const dripGeo = new THREE.CylinderGeometry(0.015, 0.02, 0.12, 8);
+        const dripMat = new THREE.MeshBasicMaterial({ color: 0xbffffa, transparent: true, opacity: 0.8 });
+
+        for (let i = 0; i < 4; i++) {
+            const mesh = new THREE.Mesh(dripGeo, dripMat);
+            mesh.visible = false;
+            scene.add(mesh);
+            ceilingDrips.push({
+                mesh,
+                active: false,
+                targetY: 0,
+                speed: 7.5,
+                timer: Math.random() * 2.5
+            });
+        }
+
+        // --- 5. МОДЕЛІ (КАЧКИ ТА КРУГИ) ---
+        let duckBaseModel = null;
+        let ringBaseModel = null;
+        const floatingProps = [];
+
+        function createProceduralRing() {
+            const ringGroup = new THREE.Group();
+            const rMat = new THREE.MeshStandardMaterial({ color: 0xff3b5c, roughness: 0.25 });
+            const mesh = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.16, 12, 24), rMat);
+            mesh.rotation.x = Math.PI / 2;
+            ringGroup.add(mesh);
+            return ringGroup;
+        }
+
+        function createProceduralDuck() {
+            const duckGroup = new THREE.Group();
+            const yMat = new THREE.MeshStandardMaterial({ color: 0xffd100, roughness: 0.3 });
+            const body = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 12), yMat);
+            body.scale.set(1, 0.75, 1.3);
+            duckGroup.add(body);
+            const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 12), yMat);
+            head.position.set(0, 0.18, 0.15);
+            duckGroup.add(head);
+            const beak = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.1, 8), new THREE.MeshStandardMaterial({ color: 0xff6600, roughness: 0.4 }));
+            beak.rotation.x = Math.PI / 2;
+            beak.position.set(0, 0.16, 0.3);
+            duckGroup.add(beak);
+            return duckGroup;
+        }
+
+        const duckFallback = createProceduralDuck();
+        const ringFallback = createProceduralRing();
+
+        const gltfLoader = new GLTFLoader();
+
+        gltfLoader.load('./yellow_rubber_duck.glb', (gltf) => {
+            duckBaseModel = gltf.scene;
+            const box = new THREE.Box3().setFromObject(duckBaseModel);
+            const size = box.getSize(new THREE.Vector3());
+            duckBaseModel.scale.setScalar(0.36 / (Math.max(size.x, size.y, size.z) || 1));
+            duckBaseModel.traverse((c) => { 
+                if (c.isMesh) { 
+                    c.castShadow = true; 
+                    c.receiveShadow = true;
+                    if (c.material && c.material.map) c.material.map.magFilter = THREE.NearestFilter;
+                } 
+            });
+            floatingProps.forEach(item => {
+                if (item.type === 'duck' && item.placeholder) {
+                    item.group.remove(item.placeholder);
+                    const real = duckBaseModel.clone();
+                    if (item.customScale) real.scale.multiplyScalar(item.customScale);
+                    item.group.add(real);
+                    item.placeholder = null;
+                }
+            });
+        }, undefined, (err) => console.warn("yellow_rubber_duck.glb не знайдено", err));
+
+        gltfLoader.load('./inflatable_pool_ring.glb', (gltf) => {
+            ringBaseModel = gltf.scene;
+            const box = new THREE.Box3().setFromObject(ringBaseModel);
+            const size = box.getSize(new THREE.Vector3());
+            ringBaseModel.scale.setScalar(0.95 / (Math.max(size.x, size.y, size.z) || 1));
+            ringBaseModel.traverse((c) => { 
+                if (c.isMesh) { 
+                    c.castShadow = true; 
+                    c.receiveShadow = true;
+                    if (c.material && c.material.map) c.material.map.magFilter = THREE.NearestFilter;
+                } 
+            });
+            floatingProps.forEach(item => {
+                if (item.type === 'ring' && item.placeholder) {
+                    item.group.remove(item.placeholder);
+                    item.group.add(ringBaseModel.clone());
+                    item.placeholder = null;
+                }
+            });
+        }, undefined, (err) => console.warn("inflatable_pool_ring.glb не знайдено", err));
+
+        function spawnProp(type, x, y, z, parentGroup, options = {}) {
+            const holder = new THREE.Group();
+            holder.position.set(x, y, z);
+            if (options.rotY) holder.rotation.y = options.rotY;
+
+            let mesh;
+            let isPlaceholder = false;
+
+            if (type === 'duck') {
+                if (duckBaseModel) {
+                    mesh = duckBaseModel.clone();
+                    if (options.scale) mesh.scale.multiplyScalar(options.scale);
+                } else {
+                    mesh = duckFallback.clone();
+                    if (options.scale) mesh.scale.multiplyScalar(options.scale);
+                    isPlaceholder = true;
+                }
+            } else if (type === 'ring') {
+                if (ringBaseModel) mesh = ringBaseModel.clone();
+                else { mesh = ringFallback.clone(); isPlaceholder = true; }
+            }
+
+            holder.add(mesh);
+
+            if (options.hasDuckInside) {
+                const innerDuck = duckBaseModel ? duckBaseModel.clone() : duckFallback.clone();
+                innerDuck.position.y = 0.05;
+                holder.add(innerDuck);
+            }
+
+            parentGroup.add(holder);
+
+            floatingProps.push({
+                type: type,
+                group: holder,
+                placeholder: isPlaceholder ? mesh : null,
+                customScale: options.scale || 1.0,
+                baseY: y,
+                phase: Math.random() * Math.PI * 2,
+                rotSpeed: (Math.random() - 0.5) * 0.4,
+                isOnStairs: options.isOnStairs || false,
+                isGiant: options.isGiant || false,
+                isDuckOrHasDuck: type === 'duck' || options.hasDuckInside,
+                hasSqueaked: false
+            });
+        }
+
+        // --- 6. ДИНАМІЧНИЙ СТЕК ПОВЕРХІВ ---
+        const loadedFloors = new Map();
+
+        function createFloorChunk(index) {
+            const group = new THREE.Group();
+            const baseY = index * FLOOR_HEIGHT;
+            const anomalyType = index % 5;
+
+            // 1. Центральна колона
+            const pillar = new THREE.Mesh(pillarGeo, pillarMat);
+            pillar.position.set(0, baseY + FLOOR_HEIGHT / 2, 0);
+            pillar.castShadow = true;
+            pillar.receiveShadow = true;
+            group.add(pillar);
+
+            // 2. Колони
+            const activeCols = (anomalyType === 1) ? forestColPositions : defaultColPositions;
+            activeCols.forEach(([cx, cz]) => {
+                const col = new THREE.Mesh(outerColGeo, outerColMat);
+                col.position.set(cx, baseY + FLOOR_HEIGHT / 2, cz);
+                col.castShadow = true;
+                col.receiveShadow = true;
+                group.add(col);
+            });
+
+            // 3. Сходи
+            for (let i = 0; i < STEPS_PER_FLOOR; i++) {
+                const totalStepIdx = index * STEPS_PER_FLOOR + i;
+                const angle = totalStepIdx * SPIRAL_SPEED;
+                const y = totalStepIdx * STEP_HEIGHT + 0.1;
+                const r = PILLAR_RADIUS + (STEP_WIDTH / 2) - 0.12;
+
+                const step = new THREE.Mesh(stepGeo, stepMat);
+                step.position.set(Math.cos(angle) * r, y, Math.sin(angle) * r);
+                step.rotation.y = -angle;
+                step.castShadow = true;
+                step.receiveShadow = true;
+                group.add(step);
+
+                if (i === 11 && anomalyType !== 2) {
+                    spawnProp('duck', Math.cos(angle) * (r - 0.25), y + 0.18, Math.sin(angle) * (r - 0.25), group, { isOnStairs: true });
+                }
+            }
+
+            // 4. Стеля з отвором
+            const ceiling = new THREE.Mesh(slabGeo, slabMat);
+            ceiling.rotation.x = Math.PI / 2;
+            ceiling.position.y = baseY + FLOOR_HEIGHT;
+            ceiling.receiveShadow = true;
+            group.add(ceiling);
+
+            const holeRim = new THREE.Mesh(holeRimGeo, holeRimMat);
+            holeRim.position.y = baseY + FLOOR_HEIGHT - 0.12;
+            holeRim.receiveShadow = true;
+            group.add(holeRim);
+
+            // 5. Стельові лампи
+            const ceilingY = baseY + FLOOR_HEIGHT - 0.02;
+            const lampDist = 7.6;
+            const lampPositions = [
+                [0, lampDist], [0, -lampDist], [lampDist, 0], [-lampDist, 0]
+            ];
+
+            lampPositions.forEach(([lx, lz]) => {
+                const lamp = createCeilingLamp();
+                lamp.position.set(lx, ceilingY, lz);
+                if (lx !== 0) lamp.rotation.y = Math.PI / 2;
+                group.add(lamp);
+
+                const pLight = new THREE.PointLight(0xfff5e4, 0.9, 18, 1.4);
+                pLight.position.set(lx, baseY + FLOOR_HEIGHT - 0.5, lz);
+                group.add(pLight);
+            });
+
+            const floorSun = new THREE.DirectionalLight(0xfffaee, 1.5);
+            floorSun.position.set(7, baseY + 14, 6);
+            floorSun.target.position.set(0, baseY, 0);
+            floorSun.castShadow = true;
+            floorSun.shadow.mapSize.set(512, 512);
+            floorSun.shadow.bias = -0.0004;
+            floorSun.shadow.camera.near = 0.5;
+            floorSun.shadow.camera.far = 32;
+            floorSun.shadow.camera.left = -16;
+            floorSun.shadow.camera.right = 16;
+            floorSun.shadow.camera.top = 16;
+            floorSun.shadow.camera.bottom = -16;
+            group.add(floorSun);
+            group.add(floorSun.target);
+
+            // 6. ВОДА ТА ПРЕДМЕТИ
+            if (index === 0) {
+                const solidFloor = new THREE.Mesh(solidFloorGeo, solidFloorMat);
+                solidFloor.rotation.x = -Math.PI / 2;
+                solidFloor.position.y = 0;
+                solidFloor.receiveShadow = true;
+                group.add(solidFloor);
+
+                const floor0Water = new THREE.Mesh(solidWaterGeo, waterFloorMat);
+                floor0Water.rotation.x = -Math.PI / 2;
+                floor0Water.position.y = 0.45;
+                floor0Water.receiveShadow = true;
+                group.add(floor0Water);
+            } else {
+                const floorWater = new THREE.Mesh(waterFloorGeo, waterFloorMat);
+                floorWater.rotation.x = Math.PI / 2;
+                floorWater.position.y = baseY + 0.45;
+                floorWater.receiveShadow = true;
+                group.add(floorWater);
+
+                const cascade = new THREE.Mesh(waterfallGeo, waterfallMat);
+                cascade.position.set(0, baseY - FLOOR_HEIGHT / 2 + 0.45, 0);
+                group.add(cascade);
+            }
+
+            const waterY = (index === 0 ? 0.46 : baseY + 0.46);
+
+            if (anomalyType === 0) {
+                spawnProp('ring', -5.5, waterY, 4.0, group, { hasDuckInside: true });
+                spawnProp('ring', 5.8, waterY, -4.5, group);
+                spawnProp('ring', -4.2, waterY, -7.0, group);
+                spawnProp('duck', -6.8, waterY, 2.8, group);
+                spawnProp('duck', 4.5, waterY, -5.8, group);
+                spawnProp('duck', 6.0, waterY, 5.5, group);
+            } else if (anomalyType === 1) {
+                spawnProp('duck', -8.5, waterY, -8.5, group);
+                spawnProp('duck', 8.5, waterY, 8.5, group);
+                spawnProp('ring', -8.5, waterY, 8.5, group);
+                spawnProp('ring', 8.5, waterY, -8.5, group);
+            } else if (anomalyType === 2) {
+                spawnProp('duck', 0.0, waterY, 6.2, group);
+            } else if (anomalyType === 3) {
+                spawnProp('duck', -8.0, waterY + 0.4, 8.0, group, { scale: 8.5, isGiant: true });
+                spawnProp('ring', 6.0, waterY, -6.0, group, { hasDuckInside: true });
+                spawnProp('duck', 4.0, waterY, 5.5, group);
+            } else if (anomalyType === 4) {
+                const ringCoords = [
+                    [-5.5, 4.0], [5.8, -4.5], [-4.2, -7.0], [7.5, 3.5], [-8.0, -3.0], [3.0, 7.5],
+                    [-7.2, 7.0], [8.0, -7.5], [-9.5, 0.0], [9.5, 0.0], [0.0, 9.5], [0.0, -9.5],
+                    [-6.0, -6.0], [6.0, 6.0], [-11.0, 5.0], [11.0, -5.0], [-3.5, 11.0], [3.5, -11.0]
+                ];
+                ringCoords.forEach(([rx, rz], rIdx) => {
+                    spawnProp('ring', rx, waterY, rz, group, { hasDuckInside: (rIdx % 4 === 0) });
+                });
+            }
+
+            // 7. СТІНИ ТА 4 ТУНЕЛІ (ПОВЕРХИ % 5 === 0)
+            if (anomalyType === 0) {
+                const rotations = [0, Math.PI, Math.PI / 2, -Math.PI / 2];
+                rotations.forEach(rot => {
+                    const tunnelSub = buildArchedTunnelUnit();
+                    tunnelSub.position.y = baseY;
+                    tunnelSub.rotation.y = rot;
+                    group.add(tunnelSub);
+                });
+            } else {
+                const wBack = new THREE.Mesh(standardWallGeo, wallMat);
+                wBack.position.set(0, baseY + FLOOR_HEIGHT / 2, -16);
+                wBack.receiveShadow = true;
+                group.add(wBack);
+
+                const wFront = new THREE.Mesh(standardWallGeo, wallMat);
+                wFront.position.set(0, baseY + FLOOR_HEIGHT / 2, 16);
+                wFront.rotation.y = Math.PI;
+                wFront.receiveShadow = true;
+                group.add(wFront);
+
+                const wLeft = new THREE.Mesh(standardWallGeo, wallMat);
+                wLeft.position.set(-16, baseY + FLOOR_HEIGHT / 2, 0);
+                wLeft.rotation.y = Math.PI / 2;
+                wLeft.receiveShadow = true;
+                group.add(wLeft);
+
+                const wRight = new THREE.Mesh(standardWallGeo, wallMat);
+                wRight.position.set(16, baseY + FLOOR_HEIGHT / 2, 0);
+                wRight.rotation.y = -Math.PI / 2;
+                wRight.receiveShadow = true;
+                group.add(wRight);
+            }
+
+            scene.add(group);
+            return group;
+        }
+
+        const darkVoidMat = new THREE.MeshBasicMaterial({ color: 0x010304, side: THREE.DoubleSide });
+        const topVoidCap = new THREE.Mesh(new THREE.CircleGeometry(HOLE_RADIUS, 24), darkVoidMat);
+        topVoidCap.rotation.x = Math.PI / 2;
+        scene.add(topVoidCap);
+
+        const bottomVoidCap = new THREE.Mesh(new THREE.CircleGeometry(HOLE_RADIUS, 24), darkVoidMat);
+        bottomVoidCap.rotation.x = -Math.PI / 2;
+        scene.add(bottomVoidCap);
+
+        function updateFloors(curFloor) {
+            const minFloor = Math.max(0, curFloor - 1);
+            const maxFloor = curFloor + 3;
+
+            for (let f = minFloor; f <= maxFloor; f++) {
+                if (!loadedFloors.has(f)) {
+                    loadedFloors.set(f, createFloorChunk(f));
+                }
+            }
+
+            for (const [f, group] of loadedFloors.entries()) {
+                if (f < minFloor || f > maxFloor) {
+                    scene.remove(group);
+                    loadedFloors.delete(f);
+                }
+            }
+
+            topVoidCap.position.y = (maxFloor + 1) * FLOOR_HEIGHT;
+            if (minFloor > 0) {
+                bottomVoidCap.visible = true;
+                bottomVoidCap.position.y = minFloor * FLOOR_HEIGHT;
+            } else {
+                bottomVoidCap.visible = false;
+            }
+        }
+
+        const ambientLight = new THREE.AmbientLight(0x2d525a, 0.65);
+        scene.add(ambientLight);
+
+        // --- 7. ЗВУКОВА СИСТЕМА ---
+        let audioCtx, droneOsc, waterfallSource, waterfallGain;
+        function initAudio() {
+            if (audioCtx) return;
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+            droneOsc = audioCtx.createOscillator();
+            const droneGain = audioCtx.createGain();
+            const filter = audioCtx.createBiquadFilter();
+
+            droneOsc.type = 'sawtooth';
+            droneOsc.frequency.setValueAtTime(42, audioCtx.currentTime);
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(120, audioCtx.currentTime);
+            droneGain.gain.setValueAtTime(0.04, audioCtx.currentTime);
+
+            droneOsc.connect(filter);
+            filter.connect(droneGain);
+            droneGain.connect(audioCtx.destination);
+            droneOsc.start();
+
+            const noiseBufferSize = audioCtx.sampleRate * 2;
+            const noiseBuffer = audioCtx.createBuffer(1, noiseBufferSize, audioCtx.sampleRate);
+            const output = noiseBuffer.getChannelData(0);
+            for (let i = 0; i < noiseBufferSize; i++) output[i] = Math.random() * 2 - 1;
+
+            waterfallSource = audioCtx.createBufferSource();
+            waterfallSource.buffer = noiseBuffer;
+            waterfallSource.loop = true;
+
+            const waterFilter = audioCtx.createBiquadFilter();
+            waterFilter.type = 'bandpass';
+            waterFilter.frequency.setValueAtTime(420, audioCtx.currentTime);
+            waterFilter.Q.setValueAtTime(1.1, audioCtx.currentTime);
+
+            waterfallGain = audioCtx.createGain();
+            waterfallGain.gain.setValueAtTime(0.045, audioCtx.currentTime);
+
+            waterfallSource.connect(waterFilter);
+            waterFilter.connect(waterfallGain);
+            waterfallGain.connect(audioCtx.destination);
+            waterfallSource.start();
+        }
+
+        function playSplashSound() {
+            if (!audioCtx) return;
+            const bufferSize = audioCtx.sampleRate * 0.16;
+            const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufferSize * 0.28));
+            }
+            const noise = audioCtx.createBufferSource();
+            noise.buffer = buffer;
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'bandpass';
+            filter.frequency.setValueAtTime(380, audioCtx.currentTime);
+            const gain = audioCtx.createGain();
+            gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+            noise.connect(filter);
+            filter.connect(gain);
+            gain.connect(audioCtx.destination);
+            noise.start();
+        }
+
+        // Звук падіння краплі води зі стелі
+        function playWaterDripSound() {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            const t = audioCtx.currentTime;
+
+            osc.type = 'sine';
+            const f = 1100 + Math.random() * 400;
+            osc.frequency.setValueAtTime(f, t);
+            osc.frequency.exponentialRampToValueAtTime(f + 650, t + 0.06);
+
+            gain.gain.setValueAtTime(0.035, t);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.11);
+
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start(t);
+            osc.stop(t + 0.11);
+        }
+
+        function playDuckSqueak(pitch = 820) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            const t = audioCtx.currentTime;
+
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(pitch, t);
+            osc.frequency.exponentialRampToValueAtTime(pitch * 1.8, t + 0.09);
+            osc.frequency.exponentialRampToValueAtTime(pitch * 1.1, t + 0.2);
+
+            gain.gain.setValueAtTime(0.09, t);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start(t);
+            osc.stop(t + 0.22);
+        }
+
+        // --- 8. КЕРУВАННЯ ТА ФІЗИКА ---
+        const controls = new PointerLockControls(camera, document.body);
+        const blocker = document.getElementById('blocker');
+        const floorNumEl = document.getElementById('floorNum');
+        const statusTxtEl = document.getElementById('statusTxt');
+
+        blocker.addEventListener('click', () => {
+            controls.lock();
+            initAudio();
+        });
+
+        controls.addEventListener('lock', () => { blocker.style.display = 'none'; });
+        controls.addEventListener('unlock', () => { blocker.style.display = 'flex'; });
+
+        const keys = {};
+        document.addEventListener('keydown', (e) => keys[e.code] = true);
+        document.addEventListener('keyup', (e) => keys[e.code] = false);
+
+        const velocity = new THREE.Vector3();
+        const direction = new THREE.Vector3();
+        let isGrounded = true;
+        let splashTimer = 0;
+        const clock = new THREE.Clock();
+
+        updateFloors(0);
+        renderer.compile(scene, camera);
+
+        // --- 9. ГОЛОВНИЙ ЦИКЛ (GAME LOOP) ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const delta = Math.min(clock.getDelta(), 0.1);
+            const time = clock.getElapsedTime();
+            waterfallTex.offset.y -= delta * 3.2;
+
+            const camX = camera.position.x;
+            const camY = camera.position.y;
+            const camZ = camera.position.z;
+
+            // 1. Анімація водяних кіл (хвиль)
+            for (let i = 0; i < MAX_RIPPLES; i++) {
+                const r = ripplePool[i];
+                if (r.active) {
+                    r.age += delta;
+                    const progress = r.age / r.maxAge;
+                    if (progress >= 1.0) {
+                        r.active = false;
+                        r.mesh.visible = false;
+                    } else {
+                        const curScale = THREE.MathUtils.lerp(0.15, r.maxScale, Math.sqrt(progress));
+                        r.mesh.scale.set(curScale, curScale, 1);
+                        r.mesh.material.opacity = (1.0 - progress) * 0.75;
+                    }
+                }
+            }
+
+            // 2. Анімація бризок води від кроків
+            for (let i = 0; i < MAX_SPLASHES; i++) {
+                const p = splashPool[i];
+                if (p.active) {
+                    p.mesh.position.x += p.vx * delta;
+                    p.mesh.position.y += p.vy * delta;
+                    p.mesh.position.z += p.vz * delta;
+                    p.vy -= 9.8 * delta; // Гравітація краплі
+
+                    if (p.mesh.position.y <= p.baseY) {
+                        p.active = false;
+                        p.mesh.visible = false;
+                    }
+                }
+            }
+
+            // 3. Анімація крапель, які стікають зі стелі
+            const curFloorBaseY = Math.floor(camY / FLOOR_HEIGHT) * FLOOR_HEIGHT;
+            const waterLevelY = curFloorBaseY + 0.45;
+
+            for (let i = 0; i < ceilingDrips.length; i++) {
+                const d = ceilingDrips[i];
+                d.timer -= delta;
+
+                if (!d.active && d.timer <= 0) {
+                    d.active = true;
+                    d.mesh.visible = true;
+                    // Капає по периметру круглого отвору або водоспаду
+                    const angle = Math.random() * Math.PI * 2;
+                    const r = HOLE_RADIUS - 0.2 + (Math.random() - 0.5) * 0.4;
+                    d.mesh.position.set(Math.cos(angle) * r, curFloorBaseY + FLOOR_HEIGHT - 0.1, Math.sin(angle) * r);
+                    d.targetY = waterLevelY;
+                }
+
+                if (d.active) {
+                    d.mesh.position.y -= d.speed * delta;
+                    if (d.mesh.position.y <= d.targetY) {
+                        d.active = false;
+                        d.mesh.visible = false;
+                        d.timer = 1.6 + Math.random() * 2.8;
+                        // Сплеск та коло від краплі
+                        triggerWaterRipple(d.mesh.position.x, d.targetY, d.mesh.position.z, 0.9);
+                        playWaterDripSound();
+                    }
+                }
+            }
+
+            // 4. Анімація плаваючих предметів
+            for (let i = 0, len = floatingProps.length; i < len; i++) {
+                const prop = floatingProps[i];
+                if (!prop.isOnStairs) {
+                    const bobAmp = prop.isGiant ? 0.06 : 0.028;
+                    const bobFreq = prop.isGiant ? 1.2 : 2.2;
+                    prop.group.position.y = prop.baseY + Math.sin(time * bobFreq + prop.phase) * bobAmp;
+                    prop.group.rotation.y += delta * prop.rotSpeed;
+                    prop.group.rotation.z = Math.sin(time * (bobFreq * 0.8) + prop.phase) * (bobAmp * 1.5);
+                }
+
+                if (prop.isDuckOrHasDuck) {
+                    const dx = prop.group.position.x - camX;
+                    const dy = prop.group.position.y - camY;
+                    const dz = prop.group.position.z - camZ;
+                    const distSq = dx * dx + dy * dy + dz * dz;
+
+                    const triggerDist = prop.isGiant ? 16.0 : 2.56;
+
+                    if (distSq < triggerDist && !prop.hasSqueaked) {
+                        playDuckSqueak(prop.isGiant ? 240 : 820);
+                        prop.hasSqueaked = true;
+                    } else if (distSq > triggerDist * 1.8) {
+                        prop.hasSqueaked = false;
+                    }
+                }
+            }
+
+            if (controls.isLocked) {
+                direction.z = Number(keys['KeyW'] || false) - Number(keys['KeyS'] || false);
+                direction.x = Number(keys['KeyD'] || false) - Number(keys['KeyA'] || false);
+                direction.normalize();
+
+                const footY = camY - 1.65;
+                const currentFloorIndex = Math.max(0, Math.floor((footY + 0.3) / FLOOR_HEIGHT));
+                floorNumEl.innerText = currentFloorIndex;
+
+                updateFloors(currentFloorIndex);
+
+                const anom = currentFloorIndex % 5;
+                if (anom === 0) statusTxtEl.innerText = "ХОЛ 4 ТУНЕЛІВ (БЕЗОДНЯ)";
+                else if (anom === 1) statusTxtEl.innerText = "АНОМАЛІЯ: ЛІС ІЗ 12 КОЛОН";
+                else if (anom === 2) statusTxtEl.innerText = "АНОМАЛІЯ: САМОТНЯ КАЧКА";
+                else if (anom === 3) statusTxtEl.innerText = "АНОМАЛІЯ: ГІГАНТСЬКИЙ МОНОЛІТ";
+                else if (anom === 4) statusTxtEl.innerText = "АНОМАЛІЯ: МОРЕ НАДУВНИХ КРУГІВ";
+
+                // 1. КОЛІЗІЯ ЦЕНТРАЛЬНОЇ КОЛОНИ
+                let distFromCenter = Math.sqrt(camX * camX + camZ * camZ);
+                const minAllowedRadius = PILLAR_RADIUS + 0.35;
+
+                if (distFromCenter < minAllowedRadius) {
+                    const pushAngle = Math.atan2(camZ, camX);
+                    camera.position.x = Math.cos(pushAngle) * minAllowedRadius;
+                    camera.position.z = Math.sin(pushAngle) * minAllowedRadius;
+                    distFromCenter = minAllowedRadius;
+                }
+
+                // 2. КОЛІЗІЯ КОЛОН
+                const currentCols = (anom === 1) ? forestColPositions : defaultColPositions;
+                const minColDist = OUTER_COL_RADIUS + 0.35;
+                currentCols.forEach(([cx, cz]) => {
+                    const dx = camera.position.x - cx;
+                    const dz = camera.position.z - cz;
+                    const d = Math.sqrt(dx * dx + dz * dz);
+                    if (d < minColDist) {
+                        const ang = Math.atan2(dz, dx);
+                        camera.position.x = cx + Math.cos(ang) * minColDist;
+                        camera.position.z = cz + Math.sin(ang) * minColDist;
+                    }
+                });
+
+                // 3. КОЛІЗІЯ ГІГАНТСЬКОЇ КАЧКИ
+                if (anom === 3) {
+                    const gdx = camera.position.x - (-8.0);
+                    const gdz = camera.position.z - 8.0;
+                    const gd = Math.sqrt(gdx * gdx + gdz * gdz);
+                    if (gd < 2.2) {
+                        const gang = Math.atan2(gdz, gdx);
+                        camera.position.x = -8.0 + Math.cos(gang) * 2.2;
+                        camera.position.z = 8.0 + Math.sin(gang) * 2.2;
+                    }
+                }
+
+                // 4. ПЕРЕВІРКА 4 ТУНЕЛІВ ТА ПЛАВНИЙ СПУСК
+                let groundY = -100;
+                let onFloorSlab = false;
+                let onStairs = false;
+                let inDeepTunnel = false;
+
+                const hasTunnelFloor = (anom === 0);
+                const floorBaseY = currentFloorIndex * FLOOR_HEIGHT;
+
+                let tunnelDir = null;
+
+                if (hasTunnelFloor) {
+                    if (Math.abs(camX) < 2.3 && camZ < -15.2) { inDeepTunnel = true; tunnelDir = 'north'; }
+                    else if (Math.abs(camX) < 2.3 && camZ > 15.2) { inDeepTunnel = true; tunnelDir = 'south'; }
+                    else if (Math.abs(camZ) < 2.3 && camX < -15.2) { inDeepTunnel = true; tunnelDir = 'west'; }
+                    else if (Math.abs(camZ) < 2.3 && camX > 15.2) { inDeepTunnel = true; tunnelDir = 'east'; }
+                }
+
+                if (inDeepTunnel) {
+                    let dPast = 0;
+                    if (tunnelDir === 'north') dPast = -15.2 - camZ;
+                    else if (tunnelDir === 'south') dPast = camZ - 15.2;
+                    else if (tunnelDir === 'west') dPast = -15.2 - camX;
+                    else if (tunnelDir === 'east') dPast = camX - 15.2;
+
+                    const t = Math.max(0, Math.min(1.0, dPast / 6.5));
+                    const smoothProgress = t * t * (3.0 - 2.0 * t);
+                    groundY = floorBaseY - 2.8 * smoothProgress;
+                    onFloorSlab = true;
+                }
+
+                // Сходи
+                if (!inDeepTunnel && distFromCenter >= minAllowedRadius - 0.15 && distFromCenter <= HOLE_RADIUS + 0.2) {
+                    let angle = Math.atan2(camera.position.z, camera.position.x);
+                    if (angle < 0) angle += Math.PI * 2;
+
+                    const fraction = angle / (Math.PI * 2);
+                    const approxFloor = Math.floor(footY / FLOOR_HEIGHT);
+
+                    for (let offset = -1; offset <= 1; offset++) {
+                        const f = approxFloor + offset;
+                        const stairH = (f + fraction) * FLOOR_HEIGHT + 0.1;
+                        if (footY >= stairH - 0.6 && stairH > groundY) {
+                            groundY = stairH;
+                            onStairs = true;
+                        }
+                    }
+                }
+
+                // Підлога поверху
+                if (!inDeepTunnel && distFromCenter >= HOLE_RADIUS - 0.25) {
+                    for (let f = Math.max(0, currentFloorIndex - 1); f <= currentFloorIndex + 1; f++) {
+                        const slabY = f * FLOOR_HEIGHT;
+                        if (footY >= slabY - 0.5) {
+                            if (slabY > groundY) {
+                                groundY = slabY;
+                                onFloorSlab = true;
+                                onStairs = false;
+                            }
+                        }
+                    }
+                }
+
+                if (!inDeepTunnel && groundY < 0.0) {
+                    groundY = 0.0;
+                    if (distFromCenter >= HOLE_RADIUS - 0.25) onFloorSlab = true;
+                }
+
+                let speed = 4.2;
+                if (inDeepTunnel) {
+                    speed = 2.6;
+                } else if (onStairs) {
+                    speed = 3.2;
+                } else if (onFloorSlab) {
+                    speed = 3.6;
+                }
+
+                if (keys['KeyW'] || keys['KeyS']) velocity.z -= direction.z * speed * delta;
+                if (keys['KeyA'] || keys['KeyD']) velocity.x -= direction.x * speed * delta;
+
+                controls.moveRight(-velocity.x * delta * 7.5);
+                controls.moveForward(-velocity.z * delta * 7.5);
+
+                velocity.x *= 0.82;
+                velocity.z *= 0.82;
+
+                // Тригер кроків по воді: звук + водяні кола + бризки
+                const isWalkingInWater = (onFloorSlab || inDeepTunnel) && (Math.abs(velocity.x) > 0.01 || Math.abs(velocity.z) > 0.01);
+                if (isWalkingInWater) {
+                    splashTimer += delta;
+                    if (splashTimer > 0.42) {
+                        playSplashSound();
+                        const currentWaterY = (currentFloorIndex * FLOOR_HEIGHT) + 0.45;
+                        triggerWaterRipple(camX, currentWaterY, camZ, 2.5);
+                        triggerSplashParticles(camX, currentWaterY, camZ);
+                        splashTimer = 0;
+                    }
+                }
+
+                if (keys['Space']) {
+                    if (inDeepTunnel) {
+                        velocity.y = 4.2;
+                        const currentWaterY = (currentFloorIndex * FLOOR_HEIGHT) + 0.45;
+                        triggerWaterRipple(camX, currentWaterY, camZ, 3.0);
+                    } else if (isGrounded) {
+                        velocity.y = 4.6;
+                        isGrounded = false;
+                    }
+                }
+
+                velocity.y -= (inDeepTunnel ? 9.8 * 0.4 : 15.0) * delta;
+                camera.position.y += velocity.y * delta;
+
+                const eyeHeight = 1.65;
+                if (camera.position.y < groundY + eyeHeight) {
+                    camera.position.y = groundY + eyeHeight;
+                    velocity.y = 0;
+                    isGrounded = true;
+                }
+
+                // Межі тунелю
+                if (inDeepTunnel) {
+                    if (tunnelDir === 'north') {
+                        camera.position.x = Math.max(-2.2, Math.min(2.2, camera.position.x));
+                        camera.position.z = Math.max(-26.5, camera.position.z);
+                    } else if (tunnelDir === 'south') {
+                        camera.position.x = Math.max(-2.2, Math.min(2.2, camera.position.x));
+                        camera.position.z = Math.min(26.5, camera.position.z);
+                    } else if (tunnelDir === 'west') {
+                        camera.position.z = Math.max(-2.2, Math.min(2.2, camera.position.z));
+                        camera.position.x = Math.max(-26.5, camera.position.x);
+                    } else if (tunnelDir === 'east') {
+                        camera.position.z = Math.max(-2.2, Math.min(2.2, camera.position.z));
+                        camera.position.x = Math.min(26.5, camera.position.x);
+                    }
+                } else {
+                    camera.position.x = Math.max(-15.2, Math.min(15.2, camera.position.x));
+                    camera.position.z = Math.max(-15.2, Math.min(15.2, camera.position.z));
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(Math.floor(window.innerWidth / PIXEL_SCALE), Math.floor(window.innerHeight / PIXEL_SCALE), false);
+        });
+    </script>
+</body>
+</html>
